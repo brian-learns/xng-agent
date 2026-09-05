@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field
 
 # --- local LLM (llama-server router, OpenAI-compatible) ---------------------
 LLM_MODEL = os.environ.get("NOOA_MODEL", "Qwen3.6-35B-A3B-MXFP4_MOE")
-LLM_BASE = os.environ.get("NOOA_LLM_BASE", "http://0.0.0.0:8080/v1")
+LLM_BASE = os.environ.get("NOOA_LLM_BASE", "http://127.0.0.1:8080/v1")
 
 # Thinking disabled for speed (litellm passes it through to llama-server).
 nooa_llm = get_llm_client(
@@ -98,14 +98,19 @@ class XngBrowserAgent(Agent, llm=nooa_llm):
         # One shared headless session for the whole run (private: hidden from
         # the model's doc(self) and state block).
         self._browser: Browser | None = None
+        # Serializes browse(): the shared page must not be navigated
+        # concurrently, and _get_browser() must not create two sessions.
+        self._browser_lock = asyncio.Lock()
 
     # --- Deterministic tools: ordinary Python, callable by the model ---
 
-    def search_web(self, query: str, limit: int = 5) -> list[Hit]:
+    async def search_web(self, query: str, limit: int = 5) -> list[Hit]:
         """Search the live web via SearXNG. Returns title, url, snippet and
         published date for each hit."""
-        resp = xng.search(query, limit=limit)
-        return [Hit(h.title, h.url, h.content or "", h.published_date) for h in resp.results[:limit]]
+        # to_thread: xng.search is blocking HTTP and must not stall the event
+        # loop that the browser awaits run on.
+        resp = await asyncio.to_thread(xng.search, query, limit=limit)
+        return [Hit(h.title, h.url, h.content or "", h.published_date) for h in resp.results]
 
     async def _kill_browser(self) -> None:
         """Kill the shared session and its Chrome process.
@@ -133,6 +138,10 @@ class XngBrowserAgent(Agent, llm=nooa_llm):
                     await asyncio.wait_for(self._browser.start(), timeout=BROWSER_START_TIMEOUT)
                 except asyncio.TimeoutError:
                     logger.warning("browser start() timed out; checking CDP anyway")
+                except Exception:
+                    # A half-started session is left in self._browser; the CDP
+                    # poll below fails, it gets killed, and the retry replaces it.
+                    logger.warning("browser start() failed; checking CDP anyway", exc_info=True)
             deadline = time.monotonic() + BROWSER_START_TIMEOUT
             while time.monotonic() < deadline:
                 # is_cdp_connected is a property (bool), not a method.
@@ -149,7 +158,12 @@ class XngBrowserAgent(Agent, llm=nooa_llm):
         as soon as navigation starts, so the DOM is not ready when it resolves."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            state = await page.evaluate("() => document.readyState")
+            try:
+                state = await page.evaluate("() => document.readyState")
+            except Exception:
+                # The JS context may be torn down mid-navigation (redirects);
+                # a failed probe means "still loading", not a dead session.
+                state = None
             if state == "complete":
                 return
             await asyncio.sleep(0.2)
@@ -160,34 +174,38 @@ class XngBrowserAgent(Agent, llm=nooa_llm):
         visible text (truncated) with its title. No interaction: use this to
         read a page, not to fill forms or click through. Note the url in the
         result is the FINAL url after any redirects."""
-        browser = await self._get_browser()
-        try:
-            page = await asyncio.wait_for(browser.must_get_current_page(), timeout=BROWSE_TIMEOUT)
-            await asyncio.wait_for(page.goto(url), timeout=BROWSE_TIMEOUT)
-            await self._wait_page_ready(page, BROWSE_TIMEOUT)
-            # Read everything from the DOM (the CDP target title can lag behind nav).
-            title = (await asyncio.wait_for(page.evaluate("() => document.title"), timeout=10)).strip()
-            content = (
-                await asyncio.wait_for(
-                    page.evaluate("() => (document.body ? document.body.innerText : '')"), timeout=10
-                )
-            ).strip()
-            final_url = await asyncio.wait_for(page.get_url(), timeout=10)
-        except Exception:
-            # A hung or crashed session would poison every later call: kill it
-            # so the next browse() starts fresh, and let the model see the error.
-            await self._kill_browser()
-            raise
-        note = PageNote(url=final_url, title=title, content=content[:MAX_CONTENT_CHARS])
-        self.findings.append(note)
-        return note
+        # Model code may fire browse() calls concurrently (e.g. via
+        # asyncio.gather); serialize so one page is never navigated twice at
+        # once and _get_browser() never creates a second session.
+        async with self._browser_lock:
+            browser = await self._get_browser()
+            try:
+                page = await asyncio.wait_for(browser.must_get_current_page(), timeout=BROWSE_TIMEOUT)
+                await asyncio.wait_for(page.goto(url), timeout=BROWSE_TIMEOUT)
+                await self._wait_page_ready(page, BROWSE_TIMEOUT)
+                # Read everything from the DOM (the CDP target title can lag behind nav).
+                title = (await asyncio.wait_for(page.evaluate("() => document.title"), timeout=10)).strip()
+                content = (
+                    await asyncio.wait_for(
+                        page.evaluate("() => (document.body ? document.body.innerText : '')"), timeout=10
+                    )
+                ).strip()
+                final_url = await asyncio.wait_for(page.get_url(), timeout=10)
+            except Exception:
+                # A hung or crashed session would poison every later call: kill it
+                # so the next browse() starts fresh, and let the model see the error.
+                await self._kill_browser()
+                raise
+            note = PageNote(url=final_url, title=title, content=content[:MAX_CONTENT_CHARS])
+            self.findings.append(note)
+            return note
 
     # --- Agentic method: ellipsis body, run by the LLM (CodeAct loop) ---
 
     # ty: the ellipsis body is intentional — NOOA implements it at runtime via the LLM.
     @strategy(CodeActStrategy())
     async def research(self, topic: str) -> ResearchReport:  # ty: ignore[empty-body]
-        """Research {topic}. Search the web with self.search_web(), pick the 2-3
+        """Research {topic}. Search the web with await self.search_web(), pick the 2-3
         most promising URLs, and read each with await self.browse(url). Base the
         report only on the browsed content and search snippets — do not invent
         content. Cite a URL for each key fact."""

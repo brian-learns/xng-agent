@@ -6,7 +6,8 @@ browser sub-agent: the only LLM loop is NOOA's.
 
 The agent is a single Python class (`src/xng_agent/__init__.py`); the model-facing surface:
 
-- `search_web(query, limit)` — deterministic; wraps the `xng` Python API.
+- `await search_web(query, limit)` — deterministic; wraps the `xng` Python API in a worker
+  thread (`asyncio.to_thread`) so the blocking HTTP call can't stall the browser loop.
 - `browse(url)` — deterministic; opens the URL in a shared headless Chrome and returns the
   page's visible text (truncated to 3000 chars) and title. Drives browser-use session
   primitives directly (CDP navigate + `document.body.innerText`), so no nested LLM loop.
@@ -15,7 +16,7 @@ The agent is a single Python class (`src/xng_agent/__init__.py`); the model-faci
 
 ## Prerequisites
 
-- A `llama-server` router (OpenAI-compatible). Defaults: `http://0.0.0.0:8080/v1` with
+- A `llama-server` router (OpenAI-compatible). Defaults: `http://127.0.0.1:8080/v1` with
   model `Qwen3.6-35B-A3B-MXFP4_MOE`; override with `NOOA_MODEL` / `NOOA_LLM_BASE`.
 - A running SearXNG instance (configured for `xng`, e.g. `SEARXNG_URL`).
 - A local Chrome at `/usr/bin/google-chrome` (override with `CHROME_PATH`).

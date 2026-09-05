@@ -11,20 +11,20 @@ help:
 
 check:
 	@echo "\n— [An extremely fast Python linter and code formatter](https://docs.astral.sh/ruff/)"
-	uv run ruff check src/ --fix
-	uv run ruff format src/ --check
+	uv run ruff check src/ tests/
+	uv run ruff format src/ tests/ --check
 
 	@echo "\n— [AST based security scanner](https://bandit.readthedocs.io/en/latest/)"
-	uv run bandit -c pyproject.toml -r src/
+	uv run bandit -c pyproject.toml -r src/ tests/
 
 	@echo "\n— [Find dead Python code](https://github.com/jendrikseipp/vulture)"
-	uv run vulture src/ --min-confidence 80
+	uv run vulture src/ tests/ --min-confidence 80
 
 	@echo "\n— [A tool for refurbishing and modernizing Python codebases](https://github.com/dosisod/refurb)"
-	uv run refurb src/
+	uv run refurb src/ tests/
 
 	@echo "\n— [An extremely fast Python type checker and language server]( https://docs.astral.sh/ty/)"
-	uv run ty check src/
+	uv run ty check src/ tests/
 
 	@echo "\n— [Interrogate a codebase for docstring coverage](https://interrogate.readthedocs.io/en/latest/)"
 	#uv run interrogate src/
