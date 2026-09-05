@@ -2,6 +2,7 @@
 
 import asyncio
 import types
+from datetime import datetime
 
 import pytest
 import xng
@@ -85,6 +86,14 @@ def test_wait_page_ready_times_out():
     with pytest.raises(TimeoutError):
         # ty: ignore[invalid-argument-type]
         asyncio.run(XngBrowserAgent._wait_page_ready(page, 0.3))
+
+
+def test_today_holds_the_current_date():
+    agent = XngBrowserAgent()
+    now = datetime.now().astimezone()
+    assert now.strftime("%Y-%m-%d") in agent.today
+    # %z renders empty on naive datetimes; the offset must actually be there.
+    assert agent.today.endswith(now.strftime("%z"))
 
 
 def test_search_web_maps_hits(monkeypatch):

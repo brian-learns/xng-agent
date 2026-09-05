@@ -9,6 +9,8 @@ No memory: every run is self-contained. The model-facing surface is one class:
                     no LLM involved, so the only agent loop is the NOOA one.
 - ``research``    — agentic (CodeAct): the model writes Python that searches,
                     browses, and returns a validated ``ResearchReport``.
+- ``today``       — state field (weekday, date, local time + UTC offset)
+                    visible to the model for resolving relative dates.
 
 Run:
     uv run xng-agent "topic to research"
@@ -22,6 +24,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime
 
 import xng
 from browser_use import Browser
@@ -91,10 +94,17 @@ class XngBrowserAgent(Agent, llm=nooa_llm):
     self.findings."""
 
     findings: list[PageNote]
+    today: str
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.findings: list[PageNote] = []
+        # Visible in the model's state block: the model has no clock of its
+        # own, so relative dates ("this weekend") must be resolved against
+        # this. Weekday first: it is what relative-date resolution needs.
+        # astimezone(): %z formats empty on naive datetimes, so attach the
+        # local tzinfo explicitly.
+        self.today = datetime.now().astimezone().strftime("%A %Y-%m-%d %H:%M %z")
         # One shared headless session for the whole run (private: hidden from
         # the model's doc(self) and state block).
         self._browser: Browser | None = None
@@ -205,10 +215,13 @@ class XngBrowserAgent(Agent, llm=nooa_llm):
     # ty: the ellipsis body is intentional — NOOA implements it at runtime via the LLM.
     @strategy(CodeActStrategy())
     async def research(self, topic: str) -> ResearchReport:  # ty: ignore[empty-body]
-        """Research {topic}. Search the web with await self.search_web(), pick the 2-3
-        most promising URLs, and read each with await self.browse(url). Base the
-        report only on the browsed content and search snippets — do not invent
-        content. Cite a URL for each key fact."""
+        """Research {topic}. If the topic uses relative dates ("this weekend",
+        "next month"), resolve them to concrete dates from self.today first and
+        use those dates in your searches. Search the web with await
+        self.search_web(), pick the 2-3 most promising URLs, and read each
+        with await self.browse(url). Base the report only on the browsed
+        content and search snippets — do not invent content. Cite a URL for
+        each key fact."""
         ...
 
 

@@ -13,6 +13,8 @@ The agent is a single Python class (`src/xng_agent/__init__.py`); the model-faci
   primitives directly (CDP navigate + `document.body.innerText`), so no nested LLM loop.
 - `research(topic)` — agentic (CodeAct, `...` body): the model writes Python, searches,
   browses, and returns a validated `ResearchReport` (summary, cited key facts, sources).
+- `today` — state field (weekday, date, local time + UTC offset) visible to the model so it can
+  resolve relative dates like "this weekend" to concrete dates.
 
 ## Prerequisites
 
