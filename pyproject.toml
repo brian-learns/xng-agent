@@ -16,6 +16,11 @@ dependencies = [
 [project.scripts]
 xng-agent = "xng_agent:main"
 
+[project.entry-points."nooa.skills"]
+# NOOA skill registry name -> import target. Agents opt in with
+# SkillRegistry(self).activate(["xng.web"]) to get self.web.
+"xng.web" = "xng_agent.skills:WebResearchSkill"
+
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]
 build-backend = "uv_build"

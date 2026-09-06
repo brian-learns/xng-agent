@@ -7,8 +7,8 @@ from datetime import datetime
 import pytest
 import xng
 
-import xng_agent
 from xng_agent import XngBrowserAgent
+from xng_agent.skills import MAX_CONTENT_CHARS, WebResearchSkill
 
 
 class FakePage:
@@ -50,33 +50,33 @@ class FakeBrowser:
         self.killed = True
 
 
-def make_agent(monkeypatch, page) -> tuple[XngBrowserAgent, FakeBrowser]:
-    """An agent whose _get_browser() returns a pre-seeded FakeBrowser."""
-    agent = XngBrowserAgent()
+def make_skill(monkeypatch, page) -> tuple[WebResearchSkill, FakeBrowser]:
+    """A skill whose _get_browser() returns a pre-seeded FakeBrowser."""
+    skill = WebResearchSkill()
     browser = FakeBrowser(page)
 
     async def fake_get_browser(self):
         return browser
 
-    monkeypatch.setattr(XngBrowserAgent, "_get_browser", fake_get_browser)
-    return agent, browser
+    monkeypatch.setattr(WebResearchSkill, "_get_browser", fake_get_browser)
+    return skill, browser
 
 
 def test_browse_truncates_and_records_final_url(monkeypatch):
-    agent, browser = make_agent(monkeypatch, FakePage(["loading", "complete"]))
-    note = asyncio.run(agent.browse("http://example.com/start"))
+    skill, browser = make_skill(monkeypatch, FakePage(["loading", "complete"]))
+    note = asyncio.run(skill.browse("http://example.com/start"))
     assert note.url == "http://example.com/final"
     assert note.title == "A Title"
-    assert len(note.content) == xng_agent.MAX_CONTENT_CHARS
-    assert agent.findings == [note]
+    assert len(note.content) == MAX_CONTENT_CHARS
+    assert skill.findings == [note]
     assert browser.killed is False
 
 
 def test_browse_survives_evaluate_error_during_navigation(monkeypatch):
     """A probe that fails once (JS context torn down by a redirect) must not
     kill the shared browser session."""
-    agent, browser = make_agent(monkeypatch, FakePage(["complete"], fail_first_probe=True))
-    note = asyncio.run(agent.browse("http://example.com"))
+    skill, browser = make_skill(monkeypatch, FakePage(["complete"], fail_first_probe=True))
+    note = asyncio.run(skill.browse("http://example.com"))
     assert browser.killed is False
     assert note.title == "A Title"
 
@@ -85,7 +85,7 @@ def test_wait_page_ready_times_out():
     page = FakePage(["loading"] * 10_000)
     with pytest.raises(TimeoutError):
         # ty: ignore[invalid-argument-type]
-        asyncio.run(XngBrowserAgent._wait_page_ready(page, 0.3))
+        asyncio.run(WebResearchSkill._wait_page_ready(page, 0.3))
 
 
 def test_today_holds_the_current_date():
@@ -103,12 +103,12 @@ def test_search_web_maps_hits(monkeypatch):
         types.SimpleNamespace(title="T3", url="http://c", content="x", published_date=None),
     ]
 
-    # The real xng.search honors limit; the agent no longer re-slices.
+    # The real xng.search honors limit; the skill no longer re-slices.
     def fake_search(query, limit=None):
         return types.SimpleNamespace(results=results[:limit])
 
     monkeypatch.setattr(xng, "search", fake_search)
-    hits = asyncio.run(XngBrowserAgent().search_web("query", limit=2))
+    hits = asyncio.run(WebResearchSkill().search_web("query", limit=2))
     assert [h.url for h in hits] == ["http://a", "http://b"]
     assert hits[0].title == "T1"
     assert hits[0].snippet == "snippet"
