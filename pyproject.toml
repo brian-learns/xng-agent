@@ -1,6 +1,6 @@
 [project]
 name = "xng-agent"
-version = "0.1.0"
+version = "0.1.1"
 description = "NOOA research agent: live web search (xng / SearXNG) + headless page browsing (browser-use)"
 readme = "README.md"
 authors = [
@@ -29,6 +29,7 @@ build-backend = "uv_build"
 dev = [
     "bandit>=1.9.4",
     "nooa-cli>=0.0.9",
+    "nooa[viewer]>=0.0.9",
     "pytest>=9.1.1",
     "refurb>=2.3.1",
     "ruff>=0.16.5",
